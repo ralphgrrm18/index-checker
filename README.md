@@ -1,3 +1,16 @@
+# URL Index Checker
+
+Check if a URL has been indexed by Google, Bing, Common Crawl (LLM training data), and the Wayback Machine.
+
+## Deployments
+
+| Version | URL | Branch |
+|---------|-----|--------|
+| Production | https://index-checker-mu.vercel.app | `master` |
+| + Request Indexing feature | https://index-checker-1g7bx7tmn-ralph-g-rrm-s-projects.vercel.app | `feature/request-indexing` |
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
