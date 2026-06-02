@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 interface IndexResult {
   id: string
@@ -104,6 +104,157 @@ function ExternalLink({ href, children }: { href: string; children: React.ReactN
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
       </svg>
     </a>
+  )
+}
+
+interface SubmitResult {
+  url: string
+  submittedAt: string
+  anyAccepted: boolean
+  engines: Array<{ name: string; status: number; accepted: boolean }>
+}
+
+function SubmitForIndexing({ targetUrl, noindex, blockedByGoogle, blockedByBing }: {
+  targetUrl: string
+  noindex: boolean
+  blockedByGoogle: boolean
+  blockedByBing: boolean
+}) {
+  const [key, setKey] = useState('')
+  const [keyLocation, setKeyLocation] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<SubmitResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
+
+  // Persist key in localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('indexnow_key')
+    if (saved) setKey(saved)
+  }, [])
+
+  const saveKey = (v: string) => {
+    setKey(v)
+    if (v) localStorage.setItem('indexnow_key', v)
+    else localStorage.removeItem('indexnow_key')
+  }
+
+  const submit = async () => {
+    if (!key.trim()) return
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    try {
+      const res = await fetch('/api/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl, key: key.trim(), keyLocation: keyLocation.trim() || undefined }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Submission failed')
+      setResult(json)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Unexpected error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const host = (() => { try { return new URL(targetUrl).hostname } catch { return '' } })()
+  const gscUrl = `https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent(targetUrl)}&id=${encodeURIComponent(targetUrl)}`
+
+  const hasBlocker = noindex || blockedByGoogle || blockedByBing
+
+  return (
+    <Card title="Request Indexing" icon="📡">
+      {hasBlocker && (
+        <div className="mb-4 px-3 py-2.5 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-xs text-yellow-700 dark:text-yellow-400 space-y-1">
+          {noindex && <p>⚠ <strong>noindex</strong> directive detected — crawlers will visit but won&apos;t add this URL to their index.</p>}
+          {blockedByGoogle && <p>⚠ <strong>Googlebot is blocked</strong> by robots.txt — Google won&apos;t crawl this URL.</p>}
+          {blockedByBing && <p>⚠ <strong>Bingbot is blocked</strong> by robots.txt — Bing won&apos;t crawl this URL.</p>}
+        </div>
+      )}
+
+      {/* Google */}
+      <div className="mb-4">
+        <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-2">Google</p>
+        <p className="text-xs text-zinc-500 mb-2">
+          Google has no public ping API. Use Search Console to request indexing directly.
+        </p>
+        <ExternalLink href={gscUrl}>
+          Open URL Inspection in Search Console
+        </ExternalLink>
+      </div>
+
+      <div className="border-t border-zinc-100 dark:border-zinc-800 pt-4">
+        {/* IndexNow — Bing + Yandex */}
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">IndexNow <span className="font-normal text-zinc-400">(Bing, Yandex)</span></p>
+          <button
+            onClick={() => setShowHelp(h => !h)}
+            className="text-xs text-blue-500 hover:underline"
+          >
+            {showHelp ? 'Hide setup guide' : 'How to set up?'}
+          </button>
+        </div>
+
+        {showHelp && (
+          <div className="mb-3 px-3 py-2.5 bg-zinc-50 dark:bg-zinc-800 rounded-lg text-xs text-zinc-500 space-y-1.5">
+            <p><strong className="text-zinc-700 dark:text-zinc-300">1.</strong> Generate any random string as your key (e.g. <code className="bg-zinc-200 dark:bg-zinc-700 px-1 rounded">a1b2c3d4e5f6g7h8</code>)</p>
+            <p><strong className="text-zinc-700 dark:text-zinc-300">2.</strong> Create a text file at <code className="bg-zinc-200 dark:bg-zinc-700 px-1 rounded">https://{host || 'yoursite.com'}/<em>yourkey</em>.txt</code> containing just the key on one line.</p>
+            <p><strong className="text-zinc-700 dark:text-zinc-300">3.</strong> Paste the key below and submit. Bing and Yandex will crawl the URL within minutes.</p>
+            <p className="text-zinc-400">Alternatively, host the key at a custom location and fill in the Key Location field.</p>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={key}
+            onChange={e => saveKey(e.target.value)}
+            placeholder="IndexNow API key"
+            className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 text-xs placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+          />
+          <input
+            type="text"
+            value={keyLocation}
+            onChange={e => setKeyLocation(e.target.value)}
+            placeholder={`Key location (optional, e.g. https://${host || 'yoursite.com'}/mykey.txt)`}
+            className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 text-xs placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <button
+            onClick={submit}
+            disabled={loading || !key.trim()}
+            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors"
+          >
+            {loading ? 'Submitting…' : 'Submit to Bing & Yandex via IndexNow'}
+          </button>
+        </div>
+
+        {error && (
+          <p className="mt-2 text-xs text-red-500">{error}</p>
+        )}
+
+        {result && (
+          <div className="mt-3 space-y-1.5">
+            {result.engines.map(e => (
+              <div key={e.name} className="flex items-center justify-between">
+                <span className="text-xs text-zinc-500">{e.name}</span>
+                <StatusBadge
+                  ok={e.accepted}
+                  label={e.accepted ? `Accepted (HTTP ${e.status})` : e.status === 403 ? 'Key not found (403)' : e.status === 422 ? 'URL/key mismatch (422)' : e.status === 429 ? 'Rate limited (429)' : `HTTP ${e.status || 'error'}`}
+                />
+              </div>
+            ))}
+            {result.anyAccepted && (
+              <p className="text-xs text-green-600 dark:text-green-400 mt-2">
+                Submission accepted — crawlers will visit this URL shortly.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }
 
@@ -429,6 +580,14 @@ export default function URLCheckerClient() {
               })}
             </div>
           </Card>
+
+          {/* Request Indexing */}
+          <SubmitForIndexing
+            targetUrl={data.url}
+            noindex={data.urlHealth.noindex}
+            blockedByGoogle={data.robotsTxt.blockedByGoogle}
+            blockedByBing={data.robotsTxt.blockedByBing}
+          />
 
           {/* Backlinks section */}
           <Card title="Backlink Checkers" icon="🔗">
