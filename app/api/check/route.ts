@@ -299,8 +299,7 @@ async function checkSitemap(url: string) {
 // Google retired "Search the entire web" Programmable Search engines for new accounts
 // (Jan 20, 2026), so a third-party SERP API is now the viable path for arbitrary URLs.
 async function checkGoogleIndex(url: string) {
-  // Accept SERPER_API_KEY (canonical) or `serperdev` (as named in this project's Vercel env).
-  const key = process.env.SERPER_API_KEY || process.env.serperdev
+  const key = process.env.SERPER_API_KEY
   if (!key) return { configured: false as const }
 
   const { host, pathname, search } = new URL(url)
