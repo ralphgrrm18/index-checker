@@ -816,8 +816,8 @@ function googleCell(d: CheckData): Cell {
   if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
   if (d.robotsTxt.found && d.robotsTxt.blockedByGoogle) return { tone: 'bad', label: 'robots blocked' }
   if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
-  if (d.urlHealth.nosnippet) return { tone: 'warn', label: 'eligible · no AI' }
-  return { tone: 'good', label: 'eligible' }
+  if (d.urlHealth.nosnippet) return { tone: 'warn', label: 'No blockers · no AI' }
+  return { tone: 'good', label: 'No blockers' }
 }
 
 // Most recent date the URL was seen in any crawl/archive source — a proxy for "still indexed".
@@ -831,7 +831,7 @@ function bingCell(d: CheckData): Cell {
   if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
   if (d.robotsTxt.found && d.robotsTxt.blockedByBing) return { tone: 'bad', label: 'robots blocked' }
   if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
-  return { tone: 'good', label: 'eligible' }
+  return { tone: 'good', label: 'No blockers' }
 }
 
 // LLM training-data coverage for a provider, aggregated across that provider's models.
@@ -1018,7 +1018,7 @@ function BulkChecker() {
 
       {rows.some(r => r.data) && (
         <p className="mt-3 text-xs text-zinc-400 leading-relaxed">
-          <strong>Google</strong> / <strong>Bing Search</strong> show indexability eligibility (reachable, not <code>noindex</code>, crawler not blocked) — Google/Bing expose no public index API, so use the <em>Details</em> link for a <code>site:</code> lookup. <code>no AI</code> means <code>nosnippet</code> keeps it out of AI Overviews even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting — a proxy for whether it&apos;s still indexed.
+          <strong>Google</strong> / <strong>Bing Search</strong>: <code>No blockers</code> means nothing stops indexing (reachable, not <code>noindex</code>, crawler allowed) — <em>not</em> a guarantee the page is actually indexed, since Google/Bing expose no public index API; use the <em>Details</em> link for a <code>site:</code> lookup. <code>· no AI</code> means <code>nosnippet</code> keeps it out of AI Overviews even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting — a proxy for whether it&apos;s still indexed.
         </p>
       )}
     </>
