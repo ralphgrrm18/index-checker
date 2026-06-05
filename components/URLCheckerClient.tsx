@@ -820,11 +820,11 @@ function googleCell(d: CheckData): Cell {
   return { tone: 'good', label: 'eligible' }
 }
 
-// Earliest date the URL was seen in any crawl/archive source.
-// CC firstSeen is "YYYY-MM"; Wayback firstSnapshot is "YYYY-MM-DD" — lexical min works for both.
-function firstFound(d: CheckData): string | undefined {
-  const dates = [d.commonCrawl.firstSeen, d.wayback.firstSnapshot].filter(Boolean) as string[]
-  return dates.length ? dates.sort()[0] : undefined
+// Most recent date the URL was seen in any crawl/archive source — a proxy for "still indexed".
+// CC lastSeen is "YYYY-MM"; Wayback lastSnapshot is "YYYY-MM-DD" — lexical max works for both.
+function lastSeen(d: CheckData): string | undefined {
+  const dates = [d.commonCrawl.lastSeen, d.wayback.lastSnapshot].filter(Boolean) as string[]
+  return dates.length ? dates.sort()[dates.length - 1] : undefined
 }
 
 function bingCell(d: CheckData): Cell {
@@ -898,7 +898,7 @@ function BulkChecker() {
   const urlCount = parseUrls(text).length
 
   const exportCsv = () => {
-    const header = ['URL', 'HTTP', 'Google', 'Bing Search', 'Gemini (Google)', 'OpenAI', 'First found']
+    const header = ['URL', 'HTTP', 'Google', 'Bing Search', 'Gemini (Google)', 'OpenAI', 'Last seen']
     const lines = rows.filter(r => r.data).map(r => {
       const d = r.data!
       return [
@@ -908,7 +908,7 @@ function BulkChecker() {
         bingCell(d).label,
         llmCell(d, 'Google').label,
         llmCell(d, 'OpenAI').label,
-        firstFound(d) ?? '',
+        lastSeen(d) ?? '',
       ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
     })
     const csv = [header.join(','), ...lines].join('\n')
@@ -965,7 +965,7 @@ function BulkChecker() {
                 <th className="px-3 py-2.5 font-medium">Bing Search</th>
                 <th className="px-3 py-2.5 font-medium">Gemini</th>
                 <th className="px-3 py-2.5 font-medium">OpenAI</th>
-                <th className="px-3 py-2.5 font-medium">First found</th>
+                <th className="px-3 py-2.5 font-medium">Last seen</th>
                 <th className="px-3 py-2.5 font-medium"></th>
               </tr>
             </thead>
@@ -994,7 +994,7 @@ function BulkChecker() {
                         <td className="px-3 py-2.5"><BulkBadge {...llmCell(d, 'Google')} /></td>
                         <td className="px-3 py-2.5"><BulkBadge {...llmCell(d, 'OpenAI')} /></td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-xs text-zinc-600 dark:text-zinc-400">
-                          {firstFound(d) ?? <span className="text-zinc-400">—</span>}
+                          {lastSeen(d) ?? <span className="text-zinc-400">—</span>}
                         </td>
                         <td className="px-3 py-2.5 text-right">
                           <a
@@ -1018,7 +1018,7 @@ function BulkChecker() {
 
       {rows.some(r => r.data) && (
         <p className="mt-3 text-xs text-zinc-400 leading-relaxed">
-          <strong>Google</strong> / <strong>Bing Search</strong> show indexability eligibility (reachable, not <code>noindex</code>, crawler not blocked) — Google/Bing expose no public index API, so use the <em>Details</em> link for a <code>site:</code> lookup. <code>no AI</code> means <code>nosnippet</code> keeps it out of AI Overviews even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>First found</strong> is the earliest Common Crawl / Wayback sighting.
+          <strong>Google</strong> / <strong>Bing Search</strong> show indexability eligibility (reachable, not <code>noindex</code>, crawler not blocked) — Google/Bing expose no public index API, so use the <em>Details</em> link for a <code>site:</code> lookup. <code>no AI</code> means <code>nosnippet</code> keeps it out of AI Overviews even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting — a proxy for whether it&apos;s still indexed.
         </p>
       )}
     </>
