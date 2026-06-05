@@ -60,6 +60,14 @@ interface CheckData {
     changefreq?: string
     priority?: string
   }
+  googleIndex: {
+    configured: boolean
+    indexed?: boolean | null
+    exactMatch?: boolean
+    totalResults?: number
+    topResult?: string
+    error?: string
+  }
   robotsTxt: {
     found: boolean
     blockedByGoogle: boolean
@@ -399,9 +407,32 @@ function SingleChecker() {
 
             {/* Google */}
             <Card title="Google Search" icon="🔍">
-              <p className="text-xs text-zinc-500 mb-3">
-                Google doesn't expose a free indexation API. Use the <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded">site:</code> operator to check manually.
-              </p>
+              {data.googleIndex?.configured ? (
+                <div className="mb-3">
+                  {data.googleIndex.error === 'quota' ? (
+                    <StatusBadge ok={false} label="API credits exhausted — try later" />
+                  ) : data.googleIndex.error === 'auth' ? (
+                    <StatusBadge ok={false} label="Invalid Serper API key" />
+                  ) : data.googleIndex.indexed === null || data.googleIndex.indexed === undefined ? (
+                    <StatusBadge ok={false} label="Index check failed" />
+                  ) : data.googleIndex.indexed && data.googleIndex.exactMatch ? (
+                    <StatusBadge ok label="Indexed — found in Google results" />
+                  ) : data.googleIndex.indexed ? (
+                    <StatusBadge ok={false} label="Exact URL not found (pages under this path are indexed)" />
+                  ) : (
+                    <StatusBadge ok={false} label="Not indexed — not found in Google results" />
+                  )}
+                  {typeof data.googleIndex.totalResults === 'number' && !data.googleIndex.error && (
+                    <p className="text-xs text-zinc-400 mt-2">
+                      Live <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">site:</code> query via Google (Serper) · {data.googleIndex.totalResults} match{data.googleIndex.totalResults === 1 ? '' : 'es'} returned
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-500 mb-3">
+                  Live index check not configured. Use the <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded">site:</code> operator to check manually.
+                </p>
+              )}
               <div className="flex flex-col gap-2">
                 <ExternalLink href={`https://www.google.com/search?q=site%3A${encodeURIComponent(rawUrl.replace(/^https?:\/\//, ''))}`}>
                   Check site: on Google
@@ -810,9 +841,20 @@ function BulkBadge({ tone, label }: Cell) {
   return <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}`}>{label}</span>
 }
 
-// Google eligibility: indexable = reachable, not noindex, Googlebot not blocked.
-// nosnippet keeps the page out of AI Overviews / featured snippets even when indexed.
+// Google column. When the Programmable Search API is configured we report FACTUAL index
+// status (actually in Google's SERP or not). Otherwise we fall back to the crawlability
+// heuristic ("No blockers" = nothing prevents indexing, but not proof it's indexed).
 function googleCell(d: CheckData): Cell {
+  const gi = d.googleIndex
+  if (gi?.configured) {
+    if (gi.error === 'quota') return { tone: 'neutral', label: 'quota hit' }
+    if (gi.error === 'auth') return { tone: 'neutral', label: 'bad API key' }
+    if (gi.indexed === null || gi.indexed === undefined) return { tone: 'neutral', label: 'check failed' }
+    if (gi.indexed && gi.exactMatch) return { tone: 'good', label: 'indexed' }
+    if (gi.indexed) return { tone: 'warn', label: 'path indexed' }
+    return { tone: 'bad', label: 'not indexed' }
+  }
+  // Heuristic fallback (no API key configured)
   if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
   if (d.robotsTxt.found && d.robotsTxt.blockedByGoogle) return { tone: 'bad', label: 'robots blocked' }
   if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
@@ -1018,7 +1060,7 @@ function BulkChecker() {
 
       {rows.some(r => r.data) && (
         <p className="mt-3 text-xs text-zinc-400 leading-relaxed">
-          <strong>Google</strong> / <strong>Bing Search</strong>: <code>No blockers</code> means nothing stops indexing (reachable, not <code>noindex</code>, crawler allowed) — <em>not</em> a guarantee the page is actually indexed, since Google/Bing expose no public index API; use the <em>Details</em> link for a <code>site:</code> lookup. <code>· no AI</code> means <code>nosnippet</code> keeps it out of AI Overviews even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting — a proxy for whether it&apos;s still indexed.
+          <strong>Google</strong>: when a Serper API key is configured, <code>indexed</code> / <code>not indexed</code> is a factual live <code>site:</code> check against Google&apos;s actual results (<code>path indexed</code> = the exact URL isn&apos;t found but pages under it are). Without a key it falls back to <code>No blockers</code> — nothing stops indexing, but not proof it&apos;s indexed. <strong>Bing Search</strong>: <code>No blockers</code> only (no public Bing index API); use the <em>Details</em> link for a <code>site:</code> lookup. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting.
         </p>
       )}
     </>

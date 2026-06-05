@@ -294,6 +294,46 @@ async function checkSitemap(url: string) {
   }
 }
 
+// Factual Google index check via the Serper.dev SERP API (real live Google results, works
+// for any URL). Requires SERPER_API_KEY. Degrades gracefully to { configured: false }.
+// Google retired "Search the entire web" Programmable Search engines for new accounts
+// (Jan 20, 2026), so a third-party SERP API is now the viable path for arbitrary URLs.
+async function checkGoogleIndex(url: string) {
+  const key = process.env.SERPER_API_KEY
+  if (!key) return { configured: false as const }
+
+  const { host, pathname, search } = new URL(url)
+  const bare = host + (pathname === '/' ? '' : pathname) + search
+
+  try {
+    const res = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: `site:${bare}`, num: 10 }),
+      signal: AbortSignal.timeout(10000),
+    })
+    if (res.status === 429) return { configured: true as const, indexed: null, error: 'quota' as const }
+    if (res.status === 401 || res.status === 403) return { configured: true as const, indexed: null, error: 'auth' as const }
+    if (!res.ok) return { configured: true as const, indexed: null, error: `http_${res.status}` }
+
+    const json = await res.json()
+    const organic: Array<{ link?: string }> = json.organic ?? []
+    const norm = (u: string) => u.replace(/\/$/, '').toLowerCase()
+    const target = norm(url)
+    const exactMatch = organic.some(it => it.link && norm(it.link) === target)
+
+    return {
+      configured: true as const,
+      indexed: organic.length > 0,
+      exactMatch,
+      totalResults: organic.length,
+      topResult: organic[0]?.link,
+    }
+  } catch {
+    return { configured: true as const, indexed: null, error: 'timeout' as const }
+  }
+}
+
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url')
   if (!url) return Response.json({ error: 'URL parameter required' }, { status: 400 })
@@ -306,12 +346,13 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: 'Invalid URL — must start with http:// or https://' }, { status: 400 })
   }
 
-  const [ccRes, wbRes, healthRes, robotsRes, sitemapRes] = await Promise.allSettled([
+  const [ccRes, wbRes, healthRes, robotsRes, sitemapRes, gIndexRes] = await Promise.allSettled([
     checkCommonCrawl(url),
     checkWayback(url),
     checkURLHealth(url),
     checkRobotsTxt(url),
     checkSitemap(url),
+    checkGoogleIndex(url),
   ])
 
   const cc = ccRes.status === 'fulfilled' ? ccRes.value
@@ -324,6 +365,8 @@ export async function GET(request: NextRequest) {
     : { found: false, blockedByGoogle: false, blockedByBing: false, blockedByYahoo: false, blockedByDuckDuckGo: false, blockedByAI: false, rules: [] }
   const sitemap = sitemapRes.status === 'fulfilled' ? sitemapRes.value
     : { found: false, inSitemap: false, sitemapUrl: null }
+  const googleIndex = gIndexRes.status === 'fulfilled' ? gIndexRes.value
+    : { configured: false as const }
 
   // For LLM coverage: prefer CC data; fall back to Wayback first-seen date when CC is unavailable
   const waybackFirstDate = (wayback as { firstSnapshot?: string }).firstSnapshot?.slice(0, 7) // "YYYY-MM"
@@ -352,5 +395,5 @@ export async function GET(request: NextRequest) {
       reason: cc.found ? `Only in CC after ${llm.cutoff} training cutoff` : 'Not found in Common Crawl' }
   })
 
-  return Response.json({ url, checkedAt: new Date().toISOString(), commonCrawl: cc, wayback, urlHealth: health, robotsTxt: robots, sitemap, llmCoverage: { models: llmCoverage } })
+  return Response.json({ url, checkedAt: new Date().toISOString(), commonCrawl: cc, wayback, urlHealth: health, robotsTxt: robots, sitemap, googleIndex, llmCoverage: { models: llmCoverage } })
 }
