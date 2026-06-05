@@ -47,6 +47,8 @@ interface CheckData {
     found: boolean
     blockedByGoogle: boolean
     blockedByBing: boolean
+    blockedByYahoo: boolean
+    blockedByDuckDuckGo: boolean
     blockedByAI: boolean
     rules: string[]
   }
@@ -393,6 +395,47 @@ export default function URLCheckerClient() {
               )}
             </Card>
 
+            {/* Yahoo */}
+            <Card title="Yahoo Search" icon="🟣">
+              <p className="text-xs text-zinc-500 mb-3">
+                Yahoo&apos;s web search is powered by Bing&apos;s index. If Bing has indexed this URL, it will appear in Yahoo results too.
+              </p>
+              <div className="flex flex-col gap-2">
+                <ExternalLink href={`https://search.yahoo.com/search?p=site%3A${encodeURIComponent(rawUrl.replace(/^https?:\/\//, ''))}`}>
+                  Check site: on Yahoo
+                </ExternalLink>
+              </div>
+              {data.robotsTxt.found && (
+                <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-500">Slurp (Yahoo bot)</span>
+                    <StatusBadge ok={!data.robotsTxt.blockedByYahoo} label={data.robotsTxt.blockedByYahoo ? 'Blocked' : 'Allowed'} />
+                  </div>
+                  <p className="text-xs text-zinc-400">Note: Yahoo primarily uses Bing&apos;s index, so Bingbot access matters most.</p>
+                </div>
+              )}
+            </Card>
+
+            {/* DuckDuckGo */}
+            <Card title="DuckDuckGo" icon="🦆">
+              <p className="text-xs text-zinc-500 mb-3">
+                DuckDuckGo sources results primarily from Bing, plus its own crawler (DuckDuckBot). No public indexation API is available.
+              </p>
+              <div className="flex flex-col gap-2">
+                <ExternalLink href={`https://duckduckgo.com/?q=site%3A${encodeURIComponent(rawUrl.replace(/^https?:\/\//, ''))}`}>
+                  Check site: on DuckDuckGo
+                </ExternalLink>
+              </div>
+              {data.robotsTxt.found && (
+                <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-500">DuckDuckBot</span>
+                    <StatusBadge ok={!data.robotsTxt.blockedByDuckDuckGo} label={data.robotsTxt.blockedByDuckDuckGo ? 'Blocked' : 'Allowed'} />
+                  </div>
+                </div>
+              )}
+            </Card>
+
             {/* Common Crawl */}
             <Card title="Common Crawl" icon="🕷️">
               {data.commonCrawl.unavailable ? (
@@ -519,6 +562,14 @@ export default function URLCheckerClient() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-zinc-500">Bingbot</span>
                     <StatusBadge ok={!data.robotsTxt.blockedByBing} label={data.robotsTxt.blockedByBing ? 'Blocked' : 'Allowed'} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-500">Slurp (Yahoo)</span>
+                    <StatusBadge ok={!data.robotsTxt.blockedByYahoo} label={data.robotsTxt.blockedByYahoo ? 'Blocked' : 'Allowed'} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-500">DuckDuckBot</span>
+                    <StatusBadge ok={!data.robotsTxt.blockedByDuckDuckGo} label={data.robotsTxt.blockedByDuckDuckGo ? 'Blocked' : 'Allowed'} />
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-zinc-500">AI crawlers (GPTBot, ClaudeBot…)</span>

@@ -223,11 +223,13 @@ async function checkRobotsTxt(url: string) {
       found: true,
       blockedByGoogle: isBlocked('googlebot'),
       blockedByBing: isBlocked('bingbot'),
+      blockedByYahoo: isBlocked('slurp'),
+      blockedByDuckDuckGo: isBlocked('duckduckbot'),
       blockedByAI: isBlocked('gptbot') || isBlocked('claudebot') || isBlocked('anthropic-ai') || isBlocked('google-extended'),
       rules,
     }
   } catch {
-    return { found: false, blockedByGoogle: false, blockedByBing: false, blockedByAI: false, rules: [] }
+    return { found: false, blockedByGoogle: false, blockedByBing: false, blockedByYahoo: false, blockedByDuckDuckGo: false, blockedByAI: false, rules: [] }
   }
 }
 
@@ -257,7 +259,7 @@ export async function GET(request: NextRequest) {
   const health = healthRes.status === 'fulfilled' ? healthRes.value
     : { accessible: false, robotsDirectives: [], noindex: false, nofollow: false }
   const robots = robotsRes.status === 'fulfilled' ? robotsRes.value
-    : { found: false, blockedByGoogle: false, blockedByBing: false, blockedByAI: false, rules: [] }
+    : { found: false, blockedByGoogle: false, blockedByBing: false, blockedByYahoo: false, blockedByDuckDuckGo: false, blockedByAI: false, rules: [] }
 
   // For LLM coverage: prefer CC data; fall back to Wayback first-seen date when CC is unavailable
   const waybackFirstDate = (wayback as { firstSnapshot?: string }).firstSnapshot?.slice(0, 7) // "YYYY-MM"
