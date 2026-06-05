@@ -463,8 +463,9 @@ function SingleChecker() {
                 </ExternalLink>
               </div>
               {data.robotsTxt.found && (
-                <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                  <StatusBadge ok={!data.robotsTxt.blockedByBing} label={data.robotsTxt.blockedByBing ? 'Blocked by robots.txt' : 'Not blocked in robots.txt'} />
+                <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                  <span className="text-xs text-zinc-400">Bingbot crawl access</span>
+                  <StatusBadge ok={!data.robotsTxt.blockedByBing} label={data.robotsTxt.blockedByBing ? 'Blocked' : 'Allowed'} />
                 </div>
               )}
             </Card>
