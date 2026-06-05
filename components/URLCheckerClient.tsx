@@ -40,6 +40,7 @@ interface CheckData {
     robotsDirectives: string[]
     noindex: boolean
     nofollow: boolean
+    nosnippet?: boolean
     canonicalUrl?: string
     error?: string
     seoMeta: {
@@ -276,7 +277,7 @@ function SubmitForIndexing({ targetUrl, noindex, blockedByGoogle, blockedByBing 
   )
 }
 
-export default function URLCheckerClient() {
+function SingleChecker() {
   const [inputUrl, setInputUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<CheckData | null>(null)
@@ -329,17 +330,7 @@ export default function URLCheckerClient() {
   const rawUrl = data?.url ?? ''
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 py-10">
-      {/* Header */}
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-          URL Index Checker
-        </h1>
-        <p className="text-zinc-500 dark:text-zinc-400 text-sm max-w-xl mx-auto">
-          Check if a URL has been indexed by Google, Bing, Common Crawl (LLM training data), and the Wayback Machine.
-        </p>
-      </div>
-
+    <>
       {/* Search form */}
       <form
         onSubmit={e => { e.preventDefault(); check() }}
@@ -795,6 +786,287 @@ export default function URLCheckerClient() {
           </Card>
         </div>
       )}
+    </>
+  )
+}
+
+interface BulkRow {
+  url: string
+  status: 'pending' | 'checking' | 'done' | 'error'
+  data?: CheckData
+  error?: string
+}
+
+type Tone = 'good' | 'bad' | 'warn' | 'neutral'
+interface Cell { tone: Tone; label: string }
+
+function BulkBadge({ tone, label }: Cell) {
+  const cls = {
+    good: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+    bad: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    warn: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+    neutral: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+  }[tone]
+  return <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}`}>{label}</span>
+}
+
+// Google eligibility: indexable = reachable, not noindex, Googlebot not blocked.
+// nosnippet keeps the page out of AI Overviews / featured snippets even when indexed.
+function googleCell(d: CheckData): Cell {
+  if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
+  if (d.robotsTxt.found && d.robotsTxt.blockedByGoogle) return { tone: 'bad', label: 'robots blocked' }
+  if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
+  if (d.urlHealth.nosnippet) return { tone: 'warn', label: 'No blockers · no AI' }
+  return { tone: 'good', label: 'No blockers' }
+}
+
+// Most recent date the URL was seen in any crawl/archive source — a proxy for "still indexed".
+// CC lastSeen is "YYYY-MM"; Wayback lastSnapshot is "YYYY-MM-DD" — lexical max works for both.
+function lastSeen(d: CheckData): string | undefined {
+  const dates = [d.commonCrawl.lastSeen, d.wayback.lastSnapshot].filter(Boolean) as string[]
+  return dates.length ? dates.sort()[dates.length - 1] : undefined
+}
+
+function bingCell(d: CheckData): Cell {
+  if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
+  if (d.robotsTxt.found && d.robotsTxt.blockedByBing) return { tone: 'bad', label: 'robots blocked' }
+  if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
+  return { tone: 'good', label: 'No blockers' }
+}
+
+// LLM training-data coverage for a provider, aggregated across that provider's models.
+function llmCell(d: CheckData, provider: string): Cell {
+  const subset = d.llmCoverage.models.filter(m => m.provider === provider)
+  if (subset.length === 0) return { tone: 'neutral', label: 'n/a' }
+  const likely = subset.filter(m => m.likely)
+  if (likely.some(m => m.confidence === 'high')) return { tone: 'good', label: 'likely' }
+  if (likely.length > 0) return { tone: 'warn', label: 'maybe' }
+  return { tone: 'neutral', label: 'unlikely' }
+}
+
+function BulkChecker() {
+  const [text, setText] = useState('')
+  const [rows, setRows] = useState<BulkRow[]>([])
+  const [running, setRunning] = useState(false)
+
+  const parseUrls = (raw: string): string[] => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const line of raw.split(/[\n,]/)) {
+      const t = line.trim()
+      if (!t) continue
+      const normalized = t.startsWith('http') ? t : `https://${t}`
+      if (!seen.has(normalized)) { seen.add(normalized); out.push(normalized) }
+    }
+    return out
+  }
+
+  const runBulk = useCallback(async () => {
+    const urls = parseUrls(text).slice(0, 50) // cap to keep it sane
+    if (urls.length === 0) return
+
+    setRunning(true)
+    const initial: BulkRow[] = urls.map(url => ({ url, status: 'pending' }))
+    setRows(initial)
+
+    const CONCURRENCY = 3
+    let cursor = 0
+
+    const worker = async () => {
+      while (cursor < urls.length) {
+        const i = cursor++
+        const url = urls[i]
+        setRows(prev => prev.map((r, idx) => idx === i ? { ...r, status: 'checking' } : r))
+        try {
+          const res = await fetch(`/api/check?url=${encodeURIComponent(url)}`)
+          const json = await res.json()
+          if (!res.ok) throw new Error(json.error || 'Check failed')
+          setRows(prev => prev.map((r, idx) => idx === i ? { ...r, status: 'done', data: json } : r))
+        } catch (e: unknown) {
+          setRows(prev => prev.map((r, idx) => idx === i
+            ? { ...r, status: 'error', error: e instanceof Error ? e.message : 'Error' }
+            : r))
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, urls.length) }, worker))
+    setRunning(false)
+  }, [text])
+
+  const doneCount = rows.filter(r => r.status === 'done' || r.status === 'error').length
+  const urlCount = parseUrls(text).length
+
+  const exportCsv = () => {
+    const header = ['URL', 'HTTP', 'Google', 'Bing Search', 'Gemini (Google)', 'OpenAI', 'Last seen']
+    const lines = rows.filter(r => r.data).map(r => {
+      const d = r.data!
+      return [
+        d.url,
+        d.urlHealth.accessible ? d.urlHealth.statusCode ?? '' : 'unreachable',
+        googleCell(d).label,
+        bingCell(d).label,
+        llmCell(d, 'Google').label,
+        llmCell(d, 'OpenAI').label,
+        lastSeen(d) ?? '',
+      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    })
+    const csv = [header.join(','), ...lines].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'index-check-results.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  return (
+    <>
+      <div className="mb-6">
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={6}
+          placeholder={'One URL per line (or comma-separated)\nhttps://example.com/page-1\nhttps://example.com/page-2'}
+          className="w-full px-4 py-3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 text-sm placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono resize-y"
+        />
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-xs text-zinc-400">
+            {urlCount > 0 ? `${urlCount} URL${urlCount === 1 ? '' : 's'}${urlCount > 50 ? ' (first 50 will be checked)' : ''}` : 'Up to 50 URLs'}
+          </span>
+          <div className="flex gap-2">
+            {rows.some(r => r.data) && !running && (
+              <button
+                onClick={exportCsv}
+                className="px-4 py-2 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-sm font-medium rounded-lg transition-colors"
+              >
+                Export CSV
+              </button>
+            )}
+            <button
+              onClick={runBulk}
+              disabled={running || urlCount === 0}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {running ? `Checking… (${doneCount}/${rows.length})` : 'Check all'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {rows.length > 0 && (
+        <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800 rounded-xl">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-200 dark:border-zinc-800 text-left text-xs text-zinc-500">
+                <th className="px-3 py-2.5 font-medium">URL</th>
+                <th className="px-3 py-2.5 font-medium">HTTP</th>
+                <th className="px-3 py-2.5 font-medium">Google</th>
+                <th className="px-3 py-2.5 font-medium">Bing Search</th>
+                <th className="px-3 py-2.5 font-medium">Gemini</th>
+                <th className="px-3 py-2.5 font-medium">OpenAI</th>
+                <th className="px-3 py-2.5 font-medium">Last seen</th>
+                <th className="px-3 py-2.5 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const d = r.data
+                return (
+                  <tr key={i} className="border-b border-zinc-100 dark:border-zinc-800/50 last:border-0">
+                    <td className="px-3 py-2.5 max-w-[220px]">
+                      <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 truncate block" title={r.url}>
+                        {r.url.replace(/^https?:\/\//, '')}
+                      </span>
+                    </td>
+                    {r.status === 'pending' && <td colSpan={7} className="px-3 py-2.5 text-xs text-zinc-400">Queued…</td>}
+                    {r.status === 'checking' && <td colSpan={7} className="px-3 py-2.5 text-xs text-zinc-400">Checking…</td>}
+                    {r.status === 'error' && <td colSpan={7} className="px-3 py-2.5 text-xs text-red-500">{r.error}</td>}
+                    {r.status === 'done' && d && (
+                      <>
+                        <td className="px-3 py-2.5">
+                          <BulkBadge {...(d.urlHealth.accessible
+                            ? { tone: 'good', label: `${d.urlHealth.statusCode}` }
+                            : { tone: 'bad', label: 'down' })} />
+                        </td>
+                        <td className="px-3 py-2.5"><BulkBadge {...googleCell(d)} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...bingCell(d)} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...llmCell(d, 'Google')} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...llmCell(d, 'OpenAI')} /></td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-xs text-zinc-600 dark:text-zinc-400">
+                          {lastSeen(d) ?? <span className="text-zinc-400">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <a
+                            href={`/?url=${encodeURIComponent(r.url)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+                          >
+                            Details ↗
+                          </a>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {rows.some(r => r.data) && (
+        <p className="mt-3 text-xs text-zinc-400 leading-relaxed">
+          <strong>Google</strong> / <strong>Bing Search</strong>: <code>No blockers</code> means nothing stops indexing (reachable, not <code>noindex</code>, crawler allowed) — <em>not</em> a guarantee the page is actually indexed, since Google/Bing expose no public index API; use the <em>Details</em> link for a <code>site:</code> lookup. <code>· no AI</code> means <code>nosnippet</code> keeps it out of AI Overviews even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting — a proxy for whether it&apos;s still indexed.
+        </p>
+      )}
+    </>
+  )
+}
+
+export default function URLCheckerClient() {
+  const [mode, setMode] = useState<'single' | 'bulk'>('single')
+
+  return (
+    <div className="w-full max-w-4xl mx-auto px-4 py-10">
+      {/* Header */}
+      <div className="mb-6 text-center">
+        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
+          URL Index Checker
+        </h1>
+        <p className="text-zinc-500 dark:text-zinc-400 text-sm max-w-xl mx-auto">
+          Check if a URL has been indexed by Google, Bing, Common Crawl (LLM training data), and the Wayback Machine.
+        </p>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex justify-center mb-8">
+        <div className="inline-flex p-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
+          <button
+            onClick={() => setMode('single')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              mode === 'single'
+                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+            }`}
+          >
+            Single URL
+          </button>
+          <button
+            onClick={() => setMode('bulk')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              mode === 'bulk'
+                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+            }`}
+          >
+            Bulk URLs
+          </button>
+        </div>
+      </div>
+
+      {mode === 'single' ? <SingleChecker /> : <BulkChecker />}
     </div>
   )
 }
