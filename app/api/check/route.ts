@@ -294,36 +294,40 @@ async function checkSitemap(url: string) {
   }
 }
 
-// Factual Google index check via the Programmable Search (Custom Search JSON) API.
-// Requires GOOGLE_CSE_KEY + GOOGLE_CSE_CX (a Programmable Search Engine set to search the
-// entire web). Degrades gracefully to { configured: false } when not set up.
+// Factual Google index check via the Serper.dev SERP API (real live Google results, works
+// for any URL). Requires SERPER_API_KEY. Degrades gracefully to { configured: false }.
+// Google retired "Search the entire web" Programmable Search engines for new accounts
+// (Jan 20, 2026), so a third-party SERP API is now the viable path for arbitrary URLs.
 async function checkGoogleIndex(url: string) {
-  const key = process.env.GOOGLE_CSE_KEY
-  const cx = process.env.GOOGLE_CSE_CX
-  if (!key || !cx) return { configured: false as const }
+  const key = process.env.SERPER_API_KEY
+  if (!key) return { configured: false as const }
 
   const { host, pathname, search } = new URL(url)
   const bare = host + (pathname === '/' ? '' : pathname) + search
-  const api = `https://www.googleapis.com/customsearch/v1?key=${key}&cx=${cx}&num=10&q=${encodeURIComponent(`site:${bare}`)}`
 
   try {
-    const res = await fetch(api, { signal: AbortSignal.timeout(10000) })
+    const res = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: `site:${bare}`, num: 10 }),
+      signal: AbortSignal.timeout(10000),
+    })
     if (res.status === 429) return { configured: true as const, indexed: null, error: 'quota' as const }
+    if (res.status === 401 || res.status === 403) return { configured: true as const, indexed: null, error: 'auth' as const }
     if (!res.ok) return { configured: true as const, indexed: null, error: `http_${res.status}` }
 
     const json = await res.json()
-    const total = Number(json.searchInformation?.totalResults ?? 0)
-    const items: Array<{ link?: string }> = json.items ?? []
+    const organic: Array<{ link?: string }> = json.organic ?? []
     const norm = (u: string) => u.replace(/\/$/, '').toLowerCase()
     const target = norm(url)
-    const exactMatch = items.some(it => it.link && norm(it.link) === target)
+    const exactMatch = organic.some(it => it.link && norm(it.link) === target)
 
     return {
       configured: true as const,
-      indexed: total > 0,
+      indexed: organic.length > 0,
       exactMatch,
-      totalResults: total,
-      topResult: items[0]?.link,
+      totalResults: organic.length,
+      topResult: organic[0]?.link,
     }
   } catch {
     return { configured: true as const, indexed: null, error: 'timeout' as const }

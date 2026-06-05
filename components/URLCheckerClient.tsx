@@ -410,7 +410,9 @@ function SingleChecker() {
               {data.googleIndex?.configured ? (
                 <div className="mb-3">
                   {data.googleIndex.error === 'quota' ? (
-                    <StatusBadge ok={false} label="Daily API quota reached — try later" />
+                    <StatusBadge ok={false} label="API credits exhausted — try later" />
+                  ) : data.googleIndex.error === 'auth' ? (
+                    <StatusBadge ok={false} label="Invalid Serper API key" />
                   ) : data.googleIndex.indexed === null || data.googleIndex.indexed === undefined ? (
                     <StatusBadge ok={false} label="Index check failed" />
                   ) : data.googleIndex.indexed && data.googleIndex.exactMatch ? (
@@ -420,9 +422,9 @@ function SingleChecker() {
                   ) : (
                     <StatusBadge ok={false} label="Not indexed — not found in Google results" />
                   )}
-                  {typeof data.googleIndex.totalResults === 'number' && data.googleIndex.error !== 'quota' && (
+                  {typeof data.googleIndex.totalResults === 'number' && !data.googleIndex.error && (
                     <p className="text-xs text-zinc-400 mt-2">
-                      Live <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">site:</code> query via Google Programmable Search · ~{data.googleIndex.totalResults.toLocaleString()} result{data.googleIndex.totalResults === 1 ? '' : 's'}
+                      Live <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">site:</code> query via Google (Serper) · {data.googleIndex.totalResults} match{data.googleIndex.totalResults === 1 ? '' : 'es'} returned
                     </p>
                   )}
                 </div>
@@ -846,6 +848,7 @@ function googleCell(d: CheckData): Cell {
   const gi = d.googleIndex
   if (gi?.configured) {
     if (gi.error === 'quota') return { tone: 'neutral', label: 'quota hit' }
+    if (gi.error === 'auth') return { tone: 'neutral', label: 'bad API key' }
     if (gi.indexed === null || gi.indexed === undefined) return { tone: 'neutral', label: 'check failed' }
     if (gi.indexed && gi.exactMatch) return { tone: 'good', label: 'indexed' }
     if (gi.indexed) return { tone: 'warn', label: 'path indexed' }
@@ -1057,7 +1060,7 @@ function BulkChecker() {
 
       {rows.some(r => r.data) && (
         <p className="mt-3 text-xs text-zinc-400 leading-relaxed">
-          <strong>Google</strong>: when the Programmable Search API is configured, <code>indexed</code> / <code>not indexed</code> is a factual live <code>site:</code> check against Google&apos;s actual results (<code>path indexed</code> = the exact URL isn&apos;t found but pages under it are). Without the API it falls back to <code>No blockers</code> — nothing stops indexing, but not proof it&apos;s indexed. <strong>Bing Search</strong>: <code>No blockers</code> only (no public Bing index API); use the <em>Details</em> link for a <code>site:</code> lookup. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting.
+          <strong>Google</strong>: when a Serper API key is configured, <code>indexed</code> / <code>not indexed</code> is a factual live <code>site:</code> check against Google&apos;s actual results (<code>path indexed</code> = the exact URL isn&apos;t found but pages under it are). Without a key it falls back to <code>No blockers</code> — nothing stops indexing, but not proof it&apos;s indexed. <strong>Bing Search</strong>: <code>No blockers</code> only (no public Bing index API); use the <em>Details</em> link for a <code>site:</code> lookup. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff. <strong>Last seen</strong> is the most recent Common Crawl / Wayback sighting.
         </p>
       )}
     </>
