@@ -188,6 +188,7 @@ async function checkURLHealth(url: string) {
       robotsDirectives: directives,
       noindex: all.includes('noindex'),
       nofollow: all.includes('nofollow'),
+      nosnippet: all.includes('nosnippet'),
       canonicalUrl: canonicalUrl || undefined,
       seoMeta,
     }
@@ -197,6 +198,7 @@ async function checkURLHealth(url: string) {
       robotsDirectives: [],
       noindex: false,
       nofollow: false,
+      nosnippet: false,
       error: e instanceof Error ? e.message : 'Unreachable',
       seoMeta: {},
     }
@@ -317,7 +319,7 @@ export async function GET(request: NextRequest) {
   const wayback = wbRes.status === 'fulfilled' ? wbRes.value
     : { found: false, totalSnapshots: 0, recentSnapshots: [] }
   const health = healthRes.status === 'fulfilled' ? healthRes.value
-    : { accessible: false, robotsDirectives: [], noindex: false, nofollow: false }
+    : { accessible: false, robotsDirectives: [], noindex: false, nofollow: false, nosnippet: false }
   const robots = robotsRes.status === 'fulfilled' ? robotsRes.value
     : { found: false, blockedByGoogle: false, blockedByBing: false, blockedByYahoo: false, blockedByDuckDuckGo: false, blockedByAI: false, rules: [] }
   const sitemap = sitemapRes.status === 'fulfilled' ? sitemapRes.value

@@ -40,6 +40,7 @@ interface CheckData {
     robotsDirectives: string[]
     noindex: boolean
     nofollow: boolean
+    nosnippet?: boolean
     canonicalUrl?: string
     error?: string
     seoMeta: {
@@ -796,13 +797,52 @@ interface BulkRow {
   error?: string
 }
 
-function BulkBadge({ ok, label, neutral }: { ok: boolean; label: string; neutral?: boolean }) {
-  const cls = neutral
-    ? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
-    : ok
-      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+type Tone = 'good' | 'bad' | 'warn' | 'neutral'
+interface Cell { tone: Tone; label: string }
+
+function BulkBadge({ tone, label }: Cell) {
+  const cls = {
+    good: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+    bad: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    warn: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+    neutral: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+  }[tone]
   return <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}`}>{label}</span>
+}
+
+// Google Search eligibility: indexable = reachable, not noindex, Googlebot not blocked.
+function googleCell(d: CheckData): Cell {
+  if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
+  if (d.robotsTxt.found && d.robotsTxt.blockedByGoogle) return { tone: 'bad', label: 'robots blocked' }
+  if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
+  return { tone: 'good', label: 'eligible' }
+}
+
+// AI Overview eligibility = Google-indexable AND not nosnippet (nosnippet excludes a page
+// from AI Overviews / featured snippets even when it stays in the index).
+function aiOverviewCell(d: CheckData): Cell {
+  if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
+  if (d.robotsTxt.found && d.robotsTxt.blockedByGoogle) return { tone: 'bad', label: 'blocked' }
+  if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
+  if (d.urlHealth.nosnippet) return { tone: 'warn', label: 'nosnippet' }
+  return { tone: 'good', label: 'eligible' }
+}
+
+function bingCell(d: CheckData): Cell {
+  if (!d.urlHealth.accessible) return { tone: 'neutral', label: 'unreachable' }
+  if (d.robotsTxt.found && d.robotsTxt.blockedByBing) return { tone: 'bad', label: 'robots blocked' }
+  if (d.urlHealth.noindex) return { tone: 'bad', label: 'noindex' }
+  return { tone: 'good', label: 'eligible' }
+}
+
+// LLM training-data coverage for a provider, aggregated across that provider's models.
+function llmCell(d: CheckData, provider: string): Cell {
+  const subset = d.llmCoverage.models.filter(m => m.provider === provider)
+  if (subset.length === 0) return { tone: 'neutral', label: 'n/a' }
+  const likely = subset.filter(m => m.likely)
+  if (likely.some(m => m.confidence === 'high')) return { tone: 'good', label: 'likely' }
+  if (likely.length > 0) return { tone: 'warn', label: 'maybe' }
+  return { tone: 'neutral', label: 'unlikely' }
 }
 
 function BulkChecker() {
@@ -859,18 +899,17 @@ function BulkChecker() {
   const urlCount = parseUrls(text).length
 
   const exportCsv = () => {
-    const header = ['URL', 'HTTP', 'noindex', 'Googlebot', 'Bingbot', 'In sitemap', 'Common Crawl', 'Wayback']
+    const header = ['URL', 'HTTP', 'Google Search', 'Google AI Overview', 'Bing Search', 'Gemini (Google)', 'OpenAI']
     const lines = rows.filter(r => r.data).map(r => {
       const d = r.data!
       return [
         d.url,
         d.urlHealth.accessible ? d.urlHealth.statusCode ?? '' : 'unreachable',
-        d.urlHealth.noindex ? 'yes' : 'no',
-        d.robotsTxt.found ? (d.robotsTxt.blockedByGoogle ? 'blocked' : 'allowed') : 'n/a',
-        d.robotsTxt.found ? (d.robotsTxt.blockedByBing ? 'blocked' : 'allowed') : 'n/a',
-        d.sitemap.found ? (d.sitemap.inSitemap ? 'yes' : 'no') : 'n/a',
-        d.commonCrawl.unavailable ? 'rate-limited' : d.commonCrawl.found ? 'found' : 'not found',
-        d.wayback.found ? 'archived' : 'not archived',
+        googleCell(d).label,
+        aiOverviewCell(d).label,
+        bingCell(d).label,
+        llmCell(d, 'Google').label,
+        llmCell(d, 'OpenAI').label,
       ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
     })
     const csv = [header.join(','), ...lines].join('\n')
@@ -923,11 +962,11 @@ function BulkChecker() {
               <tr className="border-b border-zinc-200 dark:border-zinc-800 text-left text-xs text-zinc-500">
                 <th className="px-3 py-2.5 font-medium">URL</th>
                 <th className="px-3 py-2.5 font-medium">HTTP</th>
-                <th className="px-3 py-2.5 font-medium">noindex</th>
-                <th className="px-3 py-2.5 font-medium">Googlebot</th>
-                <th className="px-3 py-2.5 font-medium">Sitemap</th>
-                <th className="px-3 py-2.5 font-medium">Common Crawl</th>
-                <th className="px-3 py-2.5 font-medium">Wayback</th>
+                <th className="px-3 py-2.5 font-medium">Google Search</th>
+                <th className="px-3 py-2.5 font-medium">Google AI Overview</th>
+                <th className="px-3 py-2.5 font-medium">Bing Search</th>
+                <th className="px-3 py-2.5 font-medium">Gemini</th>
+                <th className="px-3 py-2.5 font-medium">OpenAI</th>
                 <th className="px-3 py-2.5 font-medium"></th>
               </tr>
             </thead>
@@ -941,35 +980,21 @@ function BulkChecker() {
                         {r.url.replace(/^https?:\/\//, '')}
                       </span>
                     </td>
-                    {r.status === 'pending' && <td colSpan={6} className="px-3 py-2.5 text-xs text-zinc-400">Queued…</td>}
-                    {r.status === 'checking' && <td colSpan={6} className="px-3 py-2.5 text-xs text-zinc-400">Checking…</td>}
-                    {r.status === 'error' && <td colSpan={6} className="px-3 py-2.5 text-xs text-red-500">{r.error}</td>}
+                    {r.status === 'pending' && <td colSpan={7} className="px-3 py-2.5 text-xs text-zinc-400">Queued…</td>}
+                    {r.status === 'checking' && <td colSpan={7} className="px-3 py-2.5 text-xs text-zinc-400">Checking…</td>}
+                    {r.status === 'error' && <td colSpan={7} className="px-3 py-2.5 text-xs text-red-500">{r.error}</td>}
                     {r.status === 'done' && d && (
                       <>
                         <td className="px-3 py-2.5">
-                          <BulkBadge ok={d.urlHealth.accessible} label={d.urlHealth.accessible ? `${d.urlHealth.statusCode}` : 'down'} />
+                          <BulkBadge {...(d.urlHealth.accessible
+                            ? { tone: 'good', label: `${d.urlHealth.statusCode}` }
+                            : { tone: 'bad', label: 'down' })} />
                         </td>
-                        <td className="px-3 py-2.5">
-                          <BulkBadge ok={!d.urlHealth.noindex} label={d.urlHealth.noindex ? 'noindex' : 'ok'} />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {d.robotsTxt.found
-                            ? <BulkBadge ok={!d.robotsTxt.blockedByGoogle} label={d.robotsTxt.blockedByGoogle ? 'blocked' : 'allowed'} />
-                            : <BulkBadge ok={false} neutral label="n/a" />}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {d.sitemap.found
-                            ? <BulkBadge ok={d.sitemap.inSitemap} label={d.sitemap.inSitemap ? 'listed' : 'no'} />
-                            : <BulkBadge ok={false} neutral label="none" />}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {d.commonCrawl.unavailable
-                            ? <BulkBadge ok={false} neutral label="limited" />
-                            : <BulkBadge ok={d.commonCrawl.found} label={d.commonCrawl.found ? `${d.commonCrawl.indexCount}/6` : 'no'} />}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <BulkBadge ok={d.wayback.found} label={d.wayback.found ? 'archived' : 'no'} />
-                        </td>
+                        <td className="px-3 py-2.5"><BulkBadge {...googleCell(d)} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...aiOverviewCell(d)} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...bingCell(d)} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...llmCell(d, 'Google')} /></td>
+                        <td className="px-3 py-2.5"><BulkBadge {...llmCell(d, 'OpenAI')} /></td>
                         <td className="px-3 py-2.5 text-right">
                           <a
                             href={`/?url=${encodeURIComponent(r.url)}`}
@@ -988,6 +1013,12 @@ function BulkChecker() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {rows.some(r => r.data) && (
+        <p className="mt-3 text-xs text-zinc-400 leading-relaxed">
+          <strong>Search</strong> columns show indexability eligibility (reachable, not <code>noindex</code>, crawler not blocked) — Google/Bing expose no public index API, so use the <em>Details</em> link for a <code>site:</code> lookup. <strong>AI Overview</strong> also flags <code>nosnippet</code>, which excludes a page even when indexed. <strong>Gemini</strong> / <strong>OpenAI</strong> estimate training-data inclusion from Common Crawl vs. each model&apos;s cutoff.
+        </p>
       )}
     </>
   )
