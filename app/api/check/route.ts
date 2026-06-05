@@ -160,11 +160,22 @@ async function checkURLHealth(url: string) {
     let metaRobots = ''
     let canonicalUrl = ''
 
+    let seoMeta: { title?: string; description?: string; ogTitle?: string; ogDescription?: string; ogImage?: string } = {}
     const ct = res.headers.get('content-type') ?? ''
     if (ct.includes('text/html')) {
       const html = await res.text()
       metaRobots = html.match(/<meta[^>]+name=["']robots["'][^>]*content=["']([^"']+)["']/i)?.[1] ?? ''
       canonicalUrl = html.match(/<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']/i)?.[1] ?? ''
+      const getMeta = (prop: string, val: string) =>
+        html.match(new RegExp(`<meta[^>]+${prop}=["']${val}["'][^>]*content=["']([^"']+)["']`, 'i'))?.[1]
+        ?? html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*${prop}=["']${val}["']`, 'i'))?.[1]
+      seoMeta = {
+        title: html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim(),
+        description: getMeta('name', 'description'),
+        ogTitle: getMeta('property', 'og:title'),
+        ogDescription: getMeta('property', 'og:description'),
+        ogImage: getMeta('property', 'og:image'),
+      }
     }
 
     const directives = [robotsHeader, metaRobots].filter(Boolean)
@@ -178,6 +189,7 @@ async function checkURLHealth(url: string) {
       noindex: all.includes('noindex'),
       nofollow: all.includes('nofollow'),
       canonicalUrl: canonicalUrl || undefined,
+      seoMeta,
     }
   } catch (e: unknown) {
     return {
@@ -186,6 +198,7 @@ async function checkURLHealth(url: string) {
       noindex: false,
       nofollow: false,
       error: e instanceof Error ? e.message : 'Unreachable',
+      seoMeta: {},
     }
   }
 }
@@ -233,6 +246,52 @@ async function checkRobotsTxt(url: string) {
   }
 }
 
+async function checkSitemap(url: string) {
+  try {
+    const { protocol, host } = new URL(url)
+    const base = `${protocol}//${host}`
+
+    let sitemapUrl = `${base}/sitemap.xml`
+    try {
+      const robotsRes = await fetch(`${base}/robots.txt`, { signal: AbortSignal.timeout(5000) })
+      if (robotsRes.ok) {
+        const txt = await robotsRes.text()
+        const m = txt.match(/^Sitemap:\s*(.+)$/mi)
+        if (m) sitemapUrl = m[1].trim()
+      }
+    } catch { /* use default */ }
+
+    const res = await fetch(sitemapUrl, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return { found: false, inSitemap: false, sitemapUrl }
+
+    const xml = await res.text()
+    if (xml.includes('<sitemapindex')) {
+      return { found: true, inSitemap: false, sitemapUrl, isSitemapIndex: true }
+    }
+
+    const normalizedTarget = url.replace(/\/$/, '')
+    for (const block of xml.matchAll(/<url>([\s\S]*?)<\/url>/g)) {
+      const locMatch = block[1].match(/<loc>([^<]+)<\/loc>/)
+      if (!locMatch) continue
+      const loc = decodeURIComponent(locMatch[1].trim()).replace(/\/$/, '')
+      if (loc === normalizedTarget) {
+        return {
+          found: true,
+          inSitemap: true,
+          sitemapUrl,
+          lastmod: block[1].match(/<lastmod>([^<]+)<\/lastmod>/)?.[1]?.trim(),
+          changefreq: block[1].match(/<changefreq>([^<]+)<\/changefreq>/)?.[1]?.trim(),
+          priority: block[1].match(/<priority>([^<]+)<\/priority>/)?.[1]?.trim(),
+        }
+      }
+    }
+
+    return { found: true, inSitemap: false, sitemapUrl }
+  } catch {
+    return { found: false, inSitemap: false, sitemapUrl: null }
+  }
+}
+
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url')
   if (!url) return Response.json({ error: 'URL parameter required' }, { status: 400 })
@@ -245,11 +304,12 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: 'Invalid URL — must start with http:// or https://' }, { status: 400 })
   }
 
-  const [ccRes, wbRes, healthRes, robotsRes] = await Promise.allSettled([
+  const [ccRes, wbRes, healthRes, robotsRes, sitemapRes] = await Promise.allSettled([
     checkCommonCrawl(url),
     checkWayback(url),
     checkURLHealth(url),
     checkRobotsTxt(url),
+    checkSitemap(url),
   ])
 
   const cc = ccRes.status === 'fulfilled' ? ccRes.value
@@ -260,6 +320,8 @@ export async function GET(request: NextRequest) {
     : { accessible: false, robotsDirectives: [], noindex: false, nofollow: false }
   const robots = robotsRes.status === 'fulfilled' ? robotsRes.value
     : { found: false, blockedByGoogle: false, blockedByBing: false, blockedByYahoo: false, blockedByDuckDuckGo: false, blockedByAI: false, rules: [] }
+  const sitemap = sitemapRes.status === 'fulfilled' ? sitemapRes.value
+    : { found: false, inSitemap: false, sitemapUrl: null }
 
   // For LLM coverage: prefer CC data; fall back to Wayback first-seen date when CC is unavailable
   const waybackFirstDate = (wayback as { firstSnapshot?: string }).firstSnapshot?.slice(0, 7) // "YYYY-MM"
@@ -288,5 +350,5 @@ export async function GET(request: NextRequest) {
       reason: cc.found ? `Only in CC after ${llm.cutoff} training cutoff` : 'Not found in Common Crawl' }
   })
 
-  return Response.json({ url, checkedAt: new Date().toISOString(), commonCrawl: cc, wayback, urlHealth: health, robotsTxt: robots, llmCoverage: { models: llmCoverage } })
+  return Response.json({ url, checkedAt: new Date().toISOString(), commonCrawl: cc, wayback, urlHealth: health, robotsTxt: robots, sitemap, llmCoverage: { models: llmCoverage } })
 }

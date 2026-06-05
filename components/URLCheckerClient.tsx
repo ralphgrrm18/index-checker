@@ -42,6 +42,22 @@ interface CheckData {
     nofollow: boolean
     canonicalUrl?: string
     error?: string
+    seoMeta: {
+      title?: string
+      description?: string
+      ogTitle?: string
+      ogDescription?: string
+      ogImage?: string
+    }
+  }
+  sitemap: {
+    found: boolean
+    inSitemap: boolean
+    sitemapUrl: string | null
+    isSitemapIndex?: boolean
+    lastmod?: string
+    changefreq?: string
+    priority?: string
   }
   robotsTxt: {
     found: boolean
@@ -265,6 +281,7 @@ export default function URLCheckerClient() {
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<CheckData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [history, setHistory] = useState<string[]>([])
 
   const check = useCallback(async (urlToCheck?: string) => {
     const target = urlToCheck ?? inputUrl.trim()
@@ -277,17 +294,36 @@ export default function URLCheckerClient() {
     setError(null)
     setData(null)
 
+    window.history.replaceState({}, '', `?url=${encodeURIComponent(normalized)}`)
+
     try {
       const res = await fetch(`/api/check?url=${encodeURIComponent(normalized)}`)
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Check failed')
       setData(json)
+      setHistory(prev => {
+        const updated = [normalized, ...prev.filter(u => u !== normalized)].slice(0, 8)
+        localStorage.setItem('url_check_history', JSON.stringify(updated))
+        return updated
+      })
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unexpected error')
     } finally {
       setLoading(false)
     }
   }, [inputUrl])
+
+  useEffect(() => {
+    const saved: string[] = JSON.parse(localStorage.getItem('url_check_history') || '[]')
+    setHistory(saved)
+    const params = new URLSearchParams(window.location.search)
+    const urlParam = params.get('url')
+    if (urlParam) {
+      setInputUrl(urlParam)
+      check(urlParam)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const encodedUrl = data?.url ? encodeURIComponent(data.url) : ''
   const rawUrl = data?.url ?? ''
@@ -324,6 +360,21 @@ export default function URLCheckerClient() {
           {loading ? 'Checking…' : 'Check'}
         </button>
       </form>
+
+      {history.length > 0 && !data && !loading && (
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <span className="text-xs text-zinc-400 shrink-0">Recent:</span>
+          {history.map(h => (
+            <button
+              key={h}
+              onClick={() => { setInputUrl(h); check(h) }}
+              className="px-2.5 py-1 text-xs rounded-full border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 truncate max-w-[220px]"
+            >
+              {h.replace(/^https?:\/\//, '')}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="mb-6 px-4 py-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400 text-sm">
@@ -590,6 +641,96 @@ export default function URLCheckerClient() {
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-yellow-400" />
                   <span className="text-xs text-zinc-500">robots.txt not found or inaccessible</span>
+                </div>
+              )}
+            </Card>
+
+            {/* SEO & Social Preview */}
+            <Card title="SEO & Social Preview" icon="🏷️">
+              {data.urlHealth.seoMeta && Object.values(data.urlHealth.seoMeta).some(Boolean) ? (
+                <div className="space-y-3">
+                  {(data.urlHealth.seoMeta.title || data.urlHealth.seoMeta.ogTitle) && (
+                    <div>
+                      <p className="text-xs text-zinc-400 mb-0.5">Title</p>
+                      <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 leading-snug">
+                        {data.urlHealth.seoMeta.ogTitle || data.urlHealth.seoMeta.title}
+                      </p>
+                      {data.urlHealth.seoMeta.ogTitle && data.urlHealth.seoMeta.title && data.urlHealth.seoMeta.ogTitle !== data.urlHealth.seoMeta.title && (
+                        <p className="text-xs text-zinc-400 mt-0.5">HTML title: {data.urlHealth.seoMeta.title}</p>
+                      )}
+                    </div>
+                  )}
+                  {(data.urlHealth.seoMeta.description || data.urlHealth.seoMeta.ogDescription) && (
+                    <div>
+                      <p className="text-xs text-zinc-400 mb-0.5">Description</p>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        {data.urlHealth.seoMeta.ogDescription || data.urlHealth.seoMeta.description}
+                      </p>
+                    </div>
+                  )}
+                  {data.urlHealth.seoMeta.ogImage && (
+                    <div>
+                      <p className="text-xs text-zinc-400 mb-1">OG Image</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={data.urlHealth.seoMeta.ogImage}
+                        alt="Open Graph preview"
+                        className="rounded-lg w-full object-cover max-h-40 border border-zinc-200 dark:border-zinc-700"
+                        onError={e => { e.currentTarget.style.display = 'none' }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-400">
+                  {data.urlHealth.accessible ? 'No meta tags found.' : 'Page not accessible.'}
+                </p>
+              )}
+            </Card>
+
+            {/* Sitemap */}
+            <Card title="Sitemap.xml" icon="🗺️">
+              {data.sitemap.found ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-500">Listed in sitemap</span>
+                    <StatusBadge ok={data.sitemap.inSitemap} label={data.sitemap.inSitemap ? 'Found' : 'Not listed'} />
+                  </div>
+                  {data.sitemap.isSitemapIndex && (
+                    <p className="text-xs text-zinc-400">Site uses a sitemap index — child sitemaps not checked.</p>
+                  )}
+                  {data.sitemap.inSitemap && (
+                    <div className="space-y-2 pt-1">
+                      {data.sitemap.lastmod && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-zinc-500">Last modified</span>
+                          <span className="text-xs text-zinc-700 dark:text-zinc-300">{data.sitemap.lastmod}</span>
+                        </div>
+                      )}
+                      {data.sitemap.changefreq && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-zinc-500">Change frequency</span>
+                          <span className="text-xs text-zinc-700 dark:text-zinc-300">{data.sitemap.changefreq}</span>
+                        </div>
+                      )}
+                      {data.sitemap.priority && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-zinc-500">Priority</span>
+                          <span className="text-xs text-zinc-700 dark:text-zinc-300">{data.sitemap.priority}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {data.sitemap.sitemapUrl && (
+                    <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                      <ExternalLink href={data.sitemap.sitemapUrl}>View sitemap.xml</ExternalLink>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+                  <span className="text-xs text-zinc-500">No sitemap.xml found</span>
                 </div>
               )}
             </Card>
